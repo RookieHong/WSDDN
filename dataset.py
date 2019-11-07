@@ -95,24 +95,36 @@ class WSDDN_dataset(data.Dataset):
 
     def __getitem__(self, index):
         img_path = self.data[index]['img_path']
+        if self.data[index]['id'] == '007113':
+            pass
         trans = []
         img = Image.open(img_path)  # W x H
-        proposals = get_proposals(img_path)
+        proposals = get_proposals(img_path) # x y w h
         # img = cv2.imread(img_path)  # cv2.imread: W x H x C
 
-        if self.min_resize:
-            img_min_len = np.min(img.size)
-            if img_min_len < self.min_resize:
-                ratio = self.min_resize / img_min_len
-                trans.append(transforms.Resize(int(img.size[1] * ratio), int(img.size[0] * ratio)))
-                proposals = ratio * proposals
-
+        # Resize img and proposals to make sure that width or height of img is at least 224 and randomly max length
         if self.max_resize_scales:
-            max_resize = random.sample(self.max_resize_scales, 1)[0]
+            out_img_height = img.size[1]
+            out_img_width = img.size[0]
+
+            max_resize = np.random.choice(self.max_resize_scales)
             img_max_len = np.max(img.size)
-            ratio = max_resize / img_max_len
-            trans.append(transforms.Resize((int(img.size[1] * ratio), int(img.size[0] * ratio))))
-            proposals = ratio * proposals
+            max_ratio = max_resize / img_max_len
+            if self.min_resize:
+                img_min_len = np.min(img.size)
+                if img_min_len * max_ratio < self.min_resize:
+                    min_ratio = self.min_resize / img_min_len
+                    #trans.append(transforms.Resize((int(img.size[1] * min_ratio), int(img.size[0] * min_ratio))))
+                    proposals = min_ratio * proposals
+
+                    out_img_height = out_img_height * min_ratio
+                    out_img_width = out_img_width * min_ratio
+
+            out_img_height = out_img_height * max_ratio
+            out_img_width = out_img_width * max_ratio
+
+            trans.append(transforms.Resize((int(out_img_height), int(out_img_width))))
+            proposals = max_ratio * proposals
 
         trans.append(transforms.RandomHorizontalFlip())
         trans.append(transforms.ToTensor())
@@ -122,7 +134,7 @@ class WSDDN_dataset(data.Dataset):
         img = transform(img)
         label = self.data[index]['label']
         img_info = self.data[index]
-        proposals = proposals.astype(np.uint8)
+        proposals = proposals.astype(np.int)
 
         return img, label, img_info, proposals
 
