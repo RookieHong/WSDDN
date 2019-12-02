@@ -23,7 +23,7 @@ def ROI_Pooling(feature_map, output_shape):   # Feature map: C x h x w, output_s
     #
     # maxpool = nn.MaxPool2d((win_h, win_w), stride=(win_h, win_w))
     # pooled = maxpool(feature_map)
-    ROI_pool = nn.AdaptiveAvgPool2d((output_shape[0], output_shape[1]))
+    ROI_pool = nn.AdaptiveMaxPool2d((output_shape[0], output_shape[1]))
     pooled = ROI_pool(feature_map)
     vector = pooled.view(-1)
     return vector

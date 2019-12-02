@@ -1,4 +1,4 @@
-import random
+import pickle
 from torch.utils import data
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
@@ -19,39 +19,13 @@ VOC_CLASSES = [
     'sheep', 'sofa', 'train', 'tvmonitor']
 
 
-def get_proposals(img_path):
-    img = cv2.imread(img_path)
-    img_lbl, proposals = selectivesearch.selective_search(img, sigma=0.9, min_size=20)
-
-    candidates = set()
-    for proposal in proposals:
-        # Excluding same rectangle (with different segments)
-        if proposal['rect'] in candidates:
-            continue
-        x, y, w, h = proposal['rect']
-        if w == 0 or h == 0:
-            continue
-        # distorted rects
-        if w / h > 1.2 or h / w > 1.2:
-            continue
-        candidates.add(proposal['rect'])
-
-    # fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(6, 6))
-    # ax.imshow(img)
-    # for x, y, w, h in candidates:
-    #     rect = mpatches.Rectangle(
-    #         (x, y), w, h, fill=False, edgecolor='red', linewidth=1)
-    #     ax.add_patch(rect)
-    #
-    # plt.show()
-
-    return np.array(list(candidates))
-
-
 class WSDDN_dataset(data.Dataset):
-    def __init__(self, voc_root_dir, data_type, max_resize_scales=None, num_classes=20, min_resize=224):
+    def __init__(self, voc_name, data_type, proposals_path, max_resize_scales=None, num_classes=20, min_resize=224):
         assert data_type in ('train', 'val', 'trainval', 'test')
         self.data = []
+        proposals_f = open(proposals_path, 'rb')
+        self.proposals = pickle.load(proposals_f)
+        proposals_f.close()
 
         self.data_type = data_type
         self.max_resize_scales = max_resize_scales
@@ -59,7 +33,8 @@ class WSDDN_dataset(data.Dataset):
         self.num_classes = num_classes
         self.min_resize = min_resize
 
-        self.loadData(voc_root_dir)
+        self.voc_name = voc_name
+        self.loadData(os.path.join('data', voc_name))
 
     def loadData(self, voc_root_dir):
         for line in open(os.path.join(voc_root_dir, 'ImageSets', 'Main', self.data_type + '.txt')):
@@ -99,7 +74,7 @@ class WSDDN_dataset(data.Dataset):
             pass
         trans = []
         img = Image.open(img_path)  # W x H
-        proposals = get_proposals(img_path) # x y w h
+        proposals = self.proposals[img_path] # x1 y1 x2 y2
         # img = cv2.imread(img_path)  # cv2.imread: W x H x C
 
         # Resize img and proposals to make sure that width or height of img is at least 224 and randomly max length

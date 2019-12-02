@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import cv2
 import numpy as np
 from ROI_Pooling import ROI_Pooling
+from torchvision.ops import RoIPool
+import traceback
 
 
 def bboxes_iou(boxes1, boxes2):    # Calculate the IoUs for pairs of bboxes
@@ -30,22 +32,35 @@ def bboxes_iou(boxes1, boxes2):    # Calculate the IoUs for pairs of bboxes
 
     return iou
 
+
 class WSDDN(nn.Module):
 
     def __init__(self, num_classes=20):
         super(WSDDN, self).__init__()
         self.num_classes = num_classes
-        vgg16 = torchvision.models.vgg16(pretrained=True)
+        vgg16 = torchvision.models.vgg16_bn(pretrained=True)
         self.feature_map = nn.Sequential(*list(vgg16.features._modules.values())[:-1])
 
-        self.fc6 = nn.Linear(4096, 4096)
+        # self.ROIPool = RoIPool(output_size=(3, 3), spatial_scale=1./16)
+
+        self.fc6 = nn.Linear(4608, 4096)
         self.fc7 = nn.Linear(4096, 4096)
         self.fc8c = nn.Linear(4096, num_classes)
         self.fc8d = nn.Linear(4096, num_classes)
 
-    def forward(self, img, origin_rois, label):   # img: 1 x C x H x W--tensor float32, rois: 1 x N x 4(x, y, w, h)--tensor int64, label: 1 x C(one-hot vector)--tensor uint8
+    def forward(self, img, origin_rois, label):   # img: 1 x C x H x W--tensor float32, rois: 1 x N x 4(x1, y1, x2, y2)--tensor int64, label: 1 x C(one-hot vector)--tensor uint8
         feature_map = self.feature_map(img).squeeze()
         origin_rois = origin_rois.squeeze()
+
+        # # Transform rois to (x1, y1, x2, y2) form
+        # origin_rois[:, 2] = origin_rois[:, 0] + origin_rois[:, 2]
+        # origin_rois[:, 3] = origin_rois[:, 1] + origin_rois[:, 3]
+
+        # rois = []
+        # for i in range(origin_rois.shape[0]):
+        #     rois.append(origin_rois[i])
+        #
+        # rois_feature = self.ROIPool(feature_map, rois)
 
         feature_map_scale = 16  # VGG16
         scaled_rois = origin_rois / feature_map_scale   # It is still a int tensor after division (Rounding method: floored)
@@ -53,29 +68,35 @@ class WSDDN(nn.Module):
         rois = []
         filtered_origin_rois = []
         for idx, roi in enumerate(scaled_rois):
-            x = roi[0]
-            y = roi[1]
-            w = roi[2]
-            h = roi[3]
-            if w * h < 8:   # Filter small rois
+            x1 = roi[0]
+            y1 = roi[1]
+            x2 = roi[2]
+            y2 = roi[3]
+            # if (y2 - y1) * (x2 - x1) < 9:   # Filter small rois
+            #     continue
+            if (x2 - x1) <= 0 or (y2 - y1) <= 0:
                 continue
-            roi_feature_map = feature_map[:, y: y + h, x: x + w]
-            if roi_feature_map.size(1) <= 0 or roi_feature_map.size(2) <= 0:
-                print('roi:(x: %d y: %d w: %d h: %d) feature map size:(H: %d W: %d)' % (x, y, w, h, feature_map.size(1), feature_map.size(2)))
-            # Output_shape: 2x4 or 4x2 makes the pooled feature 4096-d
-            roi_feature = (ROI_Pooling(roi_feature_map, output_shape=[2, 4]) + ROI_Pooling(roi_feature_map, output_shape=[4, 2])) / 2
+            roi_feature_map = feature_map[:, y1: y2, x1: x2]
+            # if roi_feature_map.size(1) <= 0 or roi_feature_map.size(2) <= 0:
+            #     print('roi:(x1: %d y1: %d x2: %d y2: %d) feature map size:(H: %d W: %d)' % (x1, y1, x2, y2, feature_map.size(1), feature_map.size(2)))
+
+            # boxes = torch.tensor([1, x, y, x + w, y + h]).to(torch.device('cuda'))
+
+            # Output_shape: 2x4 or 4x2 makes the pooled feature 4096-d since feature map has 512 channels
+            roi_feature = ROI_Pooling(roi_feature_map, output_shape=[3, 3])
+            # roi_feature = roi_pool(feature_map, boxes=boxes.to(torch.float), output_size=(7, 7), spatial_scale=feature_map_scale)
             if not rois:
                 rois_feature = roi_feature.unsqueeze(0)
             else:
                 rois_feature = torch.cat((rois_feature, roi_feature.unsqueeze(0)))
 
-            rois.append((x, y, w, h))
-            filtered_origin_rois.append(origin_rois[idx])
+            rois.append((x1, y1, x2, y2))
+            filtered_origin_rois.append(origin_rois[idx].cpu().numpy())
 
         if not rois:
             return False
 
-        rois = torch.tensor(rois).cuda()
+        filtered_origin_rois = torch.tensor(filtered_origin_rois)
 
         # rois_feature: N x 4096
         fc6 = self.fc6(rois_feature)    # fc6 outputs: N x 4096
@@ -89,8 +110,17 @@ class WSDDN(nn.Module):
         scores = fc8c * fc8d    # scores: N x 20
         output = torch.sum(scores, dim=0)
 
-        loss = F.binary_cross_entropy(output.unsqueeze(0), label.to(torch.float32).cuda(), reduction='mean') + self.SpatialRegulariser(scores, label, fc7, rois)
-        return scores, loss, filtered_origin_rois
+        try:
+            loss = F.binary_cross_entropy(output.unsqueeze(0), label.to(torch.float32).cuda(), reduction='mean')
+        except RuntimeError:
+            print(RuntimeError)
+            print('labels:')
+            print(label)
+            print('outputs:')
+            print(output.cpu())
+        reg = self.SpatialRegulariser(scores, label, fc7, torch.tensor(rois).cuda())
+        loss += reg
+        return scores, loss, filtered_origin_rois, reg
 
     def SpatialRegulariser(self, scores, label, fc7, rois):
         label = label.squeeze()
