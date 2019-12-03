@@ -91,6 +91,8 @@ class WSDDN_dataset(data.Dataset):
                     min_ratio = self.min_resize / img_min_len
                     #trans.append(transforms.Resize((int(img.size[1] * min_ratio), int(img.size[0] * min_ratio))))
                     proposals = min_ratio * proposals
+                    for i, gt_bbox in enumerate(self.data[index]['gt_bboxes']):
+                        self.data[index]['gt_bboxes'][i]['bbox'] = min_ratio * gt_bbox['bbox']
 
                     out_img_height = out_img_height * min_ratio
                     out_img_width = out_img_width * min_ratio
@@ -100,8 +102,13 @@ class WSDDN_dataset(data.Dataset):
 
             trans.append(transforms.Resize((int(out_img_height), int(out_img_width))))
             proposals = max_ratio * proposals
+            for i, gt_bbox in enumerate(self.data[index]['gt_bboxes']):
+                self.data[index]['gt_bboxes'][i]['bbox'] = max_ratio * gt_bbox['bbox']
 
-        trans.append(transforms.RandomHorizontalFlip())
+        if self.data_type == 'test':
+            trans.append(transforms.RandomHorizontalFlip(0))
+        else:
+            trans.append(transforms.RandomHorizontalFlip())
         trans.append(transforms.ToTensor())
         trans.append(transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]))
         transform = transforms.Compose(trans)

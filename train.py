@@ -21,7 +21,7 @@ def drawBoxes(boxes):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='--lr: learning rate\n --epoch: epochs')
     parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate')
-    parser.add_argument('--epochs', type=int, default=20, help='epochs')
+    parser.add_argument('--epochs', type=int, default=40, help='epochs')
     parser.add_argument('--mode', type=str, help='set mode')
     parser.add_argument('--save_path', type=str, default='saved_models/WSDDN_model', help='Save model with this path')
     parser.add_argument('--load_path', type=str, default='', help='Load model to continue training')
@@ -59,19 +59,25 @@ if __name__ == '__main__':
     # dummy_label = torch.randint(0, 2, size=(1, 20))
     # writer.add_graph(WSDDN_model, (dummy_data.cuda(), dummy_rois.cuda(), dummy_label.cuda()))
 
-    train_data = WSDDN_dataset(voc_name='VOC2007', data_type='trainval', proposals_path='data/VOC2007_proposals_top200.pkl', max_resize_scales=[480, 576, 688, 864, 1200], min_resize=224)
+    train_data = WSDDN_dataset(voc_name='VOC2007', data_type='trainval', proposals_path='data/VOC2007_proposals_top80.pkl', max_resize_scales=[480, 576, 688, 864, 1200], min_resize=224)
     train_loader = DataLoader(dataset=train_data, batch_size=1, shuffle=False, num_workers=4, pin_memory=True)
+
+    val_data = WSDDN_dataset(voc_name='VOC2007', data_type='test', proposals_path='data/VOC2007_proposals.pkl', max_resize_scales=[480, 576, 688, 864, 1200], min_resize=224)
+    val_loader = DataLoader(dataset=val_data, batch_size=1, shuffle=False, num_workers=1)
 
     if mode == 'train':
         WSDDN_model.train()
         for epoch in range(epochs):
-            loss_sum = 0
+            print('Epoch: %d' % epoch)
+
+            train_loss_sum = 0
             iter_num = 0
             reg_sum = 0
-            print('Epoch: %d' % epoch)
+
+            # Training
             for i, (img, label, img_info, proposals) in enumerate(train_loader):
                 #print('Training img:%d\t%s\tNum of proposals:%d\t' % (i, img_info['img_path'], proposals.size(1)))
-                if epoch < 10:
+                if epoch < 20:
                     optimizer1.zero_grad()
                 else:
                     optimizer2.zero_grad()
@@ -79,31 +85,46 @@ if __name__ == '__main__':
                 proposals = proposals.to(device)
 
                 result = WSDDN_model(img, proposals, label)
-                if not result:
-                    print('There are no proposals on image %d' % i)
-                    continue
+                # if not result:
+                #     print('There are no proposals on image %d' % i)
+                #     continue
                 score, loss, rois, reg = result
 
-                loss_sum += loss.item()
+                train_loss_sum += loss.item()
                 iter_num += 1
                 reg_sum += reg.item()
 
                 if i % 100 == 0:
-                    print('Trained with %d imgs\tAvg loss: %f\tAvg reg: %f' % (i, loss_sum / iter_num, reg_sum / iter_num))
+                    print('Trained with %d imgs\tAvg loss: %f\tAvg reg: %f' % (i, train_loss_sum / iter_num, reg_sum / iter_num))
                 loss.backward()
-                if epoch < 10:
+                if epoch < 20:
                     optimizer1.step()
                 else:
                     optimizer2.step()
 
-            writer.add_scalar('Train/loss', loss_sum / iter_num, epoch)
+            writer.add_scalar('Train/loss', train_loss_sum / iter_num, epoch)
+
+            # Validating
+            val_loss_sum = 0
+            iter_num = 0
+            for i, (img, label, img_info, proposals) in enumerate(val_loader):
+                img = img.to(device)
+                proposals = proposals.to(device)
+                with torch.no_grad():
+                    result = WSDDN_model(img, proposals, label)
+                    score, loss, rois, reg = result
+
+                val_loss_sum += loss.item()
+                iter_num += 1
+                if i % 100 == 0:
+                    print('Validated with %d imgs\tAvg loss: %f' % (i, val_loss_sum / iter_num))
+
+            writer.add_scalar('Val/loss', val_loss_sum / iter_num, epoch)
             torch.save(WSDDN_model.state_dict(), save_path)
         print('Finished training')
         writer.close()
     elif mode == 'test':    # Visualize mid feature maps
         WSDDN_model.eval()
-        val_data = WSDDN_dataset(voc_name='VOC2007', data_type='test', proposals_path='data/VOC2007_proposals.pkl', max_resize_scales=[480, 576, 688, 864, 1200], min_resize=224)
-        val_loader = DataLoader(dataset=val_data, batch_size=1, shuffle=False, num_workers=1)
 
         for i, (img, label, img_info, proposals) in enumerate(val_loader):
             proposals = proposals.squeeze()

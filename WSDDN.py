@@ -110,6 +110,10 @@ class WSDDN(nn.Module):
         scores = fc8c * fc8d    # scores: N x 20
         output = torch.sum(scores, dim=0)
 
+        # Avoid numerical error in binary_cross_entropy
+        output[torch.where(output > 1)[0]] = 1
+        output[torch.where(output < 0)[0]] = 0
+
         try:
             loss = F.binary_cross_entropy(output.unsqueeze(0), label.to(torch.float32).cuda(), reduction='mean')
         except RuntimeError:
