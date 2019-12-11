@@ -43,7 +43,8 @@ class WSDDN(nn.Module):
 
         # self.ROIPool = RoIPool(output_size=(3, 3), spatial_scale=1./16)
 
-        self.fc6 = nn.Linear(4608, 4096)
+        # self.fc6 = nn.Linear(4608, 4096)
+        self.fc6 = nn.Linear(18432, 4096)
         self.fc7 = nn.Linear(4096, 4096)
         self.fc8c = nn.Linear(4096, num_classes)
         self.fc8d = nn.Linear(4096, num_classes)
@@ -82,8 +83,8 @@ class WSDDN(nn.Module):
 
             # boxes = torch.tensor([1, x, y, x + w, y + h]).to(torch.device('cuda'))
 
-            # Output_shape: 2x4 or 4x2 makes the pooled feature 4096-d since feature map has 512 channels
-            roi_feature = ROI_Pooling(roi_feature_map, output_shape=[3, 3])
+            # roi_feature = ROI_Pooling(roi_feature_map, output_shape=[3, 3])
+            roi_feature = ROI_Pooling(roi_feature_map, output_shape=[6, 6])
             # roi_feature = roi_pool(feature_map, boxes=boxes.to(torch.float), output_size=(7, 7), spatial_scale=feature_map_scale)
             if not rois:
                 rois_feature = roi_feature.unsqueeze(0)
@@ -98,8 +99,8 @@ class WSDDN(nn.Module):
 
         filtered_origin_rois = torch.tensor(filtered_origin_rois)
 
-        # rois_feature: N x 4096
-        fc6 = self.fc6(rois_feature)    # fc6 outputs: N x 4096
+        # rois_feature: N x (4096/4608/25088)
+        fc6 = self.fc6(rois_feature)    # fc6 outputs: N x (4096/4608/25088)
         fc7 = self.fc7(fc6)
 
         fc8c = self.fc8c(fc7)   # fc8c outputs: N x 20
@@ -123,7 +124,7 @@ class WSDDN(nn.Module):
             print('outputs:')
             print(output.cpu())
         reg = self.SpatialRegulariser(scores, label, fc7, torch.tensor(rois).cuda())
-        loss += reg
+        # loss += reg
         return scores, loss, filtered_origin_rois, reg
 
     def SpatialRegulariser(self, scores, label, fc7, rois):
